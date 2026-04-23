@@ -1,0 +1,16 @@
+{
+  "started_at": "2026-04-23T10:58:55.093224Z",
+  "finished_at": "2026-04-23T10:59:04.838618Z",
+  "stats": {
+    "targets": 1,
+    "test_points": 1,
+    "findings": 0,
+    "high_risk": 0,
+    "medium_risk": 0,
+    "low_risk": 0,
+    "errors": 0
+  },
+  "findings": [],
+  "errors": [],
+  "metadata": {}
+}
