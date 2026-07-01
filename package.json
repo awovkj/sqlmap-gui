@@ -1,0 +1,26 @@
+{
+  "name": "sqlmap-gui",
+  "version": "2.0.0-phase1",
+  "private": true,
+  "description": "Modern Electron + FastAPI SQLmap GUI",
+  "main": "apps/desktop/main.cjs",
+  "scripts": {
+    "start": "node scripts/start-dev.cjs",
+    "build:web": "vite build apps/web",
+    "typecheck": "tsc --noEmit",
+    "test:backend": "python -m pytest tests/backend -q",
+    "test:legacy": "python -m pytest tests/unit -q"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.1",
+    "vite": "^6.0.3",
+    "typescript": "^5.7.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1"
+  }
+}
