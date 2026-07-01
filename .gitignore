@@ -5,3 +5,4 @@ dist/
 apps/web/dist/
 data/*.sqlite3
 .superpowers/
+.tmp/
