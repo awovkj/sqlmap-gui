@@ -221,3 +221,21 @@ peixin
 ![image](https://github.com/honmashironeko/sqlmap-gui/assets/139044047/50ffc1be-6c2a-45cc-8e19-4e8606e96f60)
 
 ![image](https://github.com/honmashironeko/sqlmap-gui/assets/139044047/ffa9661d-caaf-4840-b95d-3309d636fce9)
+
+## Phase 1 Modern App
+
+新版桌面工作台采用 Electron + React + FastAPI 架构，sqlmap 核心位于 `vendor/sqlmap/`。
+
+```powershell
+python -m pip install -r requirements.txt
+npm install
+npm start
+```
+
+常用验证命令：
+
+```powershell
+python -m pytest tests/backend tests/unit -q
+npm run typecheck
+npm run build:web
+```
