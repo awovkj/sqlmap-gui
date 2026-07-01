@@ -1,0 +1,7 @@
+﻿__pycache__/
+*.py[cod]
+node_modules/
+dist/
+apps/web/dist/
+data/*.sqlite3
+.superpowers/
