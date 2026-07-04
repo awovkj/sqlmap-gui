@@ -64,7 +64,20 @@ class TaskManager:
         self.hub.publish("status", task_id, "cancelling", status=TaskStatus.CANCELLING.value)
         return task
 
+    def _is_raw_request(self, target: str) -> bool:
+        lines = target.strip().splitlines()
+        if not lines:
+            return False
+        first_line = lines[0].strip()
+        if first_line.startswith(("GET ", "POST ", "PUT ", "DELETE ", "PATCH ", "HEAD ", "OPTIONS ")):
+            if "HTTP/" in first_line:
+                return True
+        return False
+
     def _prepare_config(self, task_id: str, config: ScanConfig) -> ScanConfig:
+        if config.input_type == "url" and self._is_raw_request(config.target):
+            config = config.model_copy(update={"input_type": "raw_request"})
+        
         if config.input_type != "raw_request":
             return config
         request_path = self.artifacts.request_path(task_id)
@@ -108,9 +121,21 @@ class TaskManager:
             self.repo.add_task_event(task_id, "error", "error", str(exc))
             finished = self.repo.finish_task(task_id, TaskStatus.FAILED.value, None, str(exc))
 
-        events = self.repo.list_task_events(task_id)
-        report = self.report_service.create_basic_report(finished, events)
-        self.repo.create_report(task_id, report["summary"], report["json_path"], report["html_path"], report["markdown_path"])
+        if finished["status"] == TaskStatus.COMPLETED.value:
+            try:
+                self.generate_report(task_id)
+            except Exception as report_exc:
+                message = f"report generation failed: {report_exc}"
+                self.artifacts.append_log(task_id, f"[ERROR] {message}")
+                self.repo.add_task_event(task_id, "error", "error", message)
+                self.hub.publish("error", task_id, message, level="error")
+
         self.hub.publish("status", task_id, finished["status"], status=finished["status"])
         with self._lock:
             self._cancel_events.pop(task_id, None)
+
+    def generate_report(self, task_id: str) -> dict[str, Any]:
+        task = self.repo.get_task(task_id)
+        events = self.repo.list_task_events(task_id)
+        report = self.report_service.create_basic_report(task, events)
+        return self.repo.create_report(task_id, report["summary"], report["json_path"], report["html_path"], report["markdown_path"])

@@ -200,3 +200,10 @@ class Repository:
         if not row:
             raise KeyError(f"Report not found for task: {task_id}")
         return dict(row)
+
+    def clear_all_tasks(self) -> None:
+        with self._connect() as connection:
+            connection.execute("DELETE FROM task_events")
+            connection.execute("DELETE FROM reports")
+            connection.execute("DELETE FROM tasks")
+            connection.commit()

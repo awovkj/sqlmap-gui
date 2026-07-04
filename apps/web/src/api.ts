@@ -44,6 +44,29 @@ export async function getTaskReport(taskId: string): Promise<ReportRead | null> 
   }
 }
 
+export async function generateTaskReport(taskId: string): Promise<ReportRead> {
+  return requestJson(`/tasks/${taskId}/report/generate`, {
+    method: "POST",
+  });
+}
+
+export async function cancelTask(taskId: string): Promise<TaskRead> {
+  return requestJson(`/tasks/${taskId}/cancel`, {
+    method: "POST",
+  });
+}
+
+export async function clearAllTasks(): Promise<{ status: string; message: string }> {
+  return requestJson("/tasks", {
+    method: "DELETE",
+  });
+}
+
+export function downloadReport(taskId: string, format: "json" | "html" | "markdown" = "json") {
+  const url = `${API_BASE}/tasks/${taskId}/report/download?format=${format}`;
+  window.open(url, "_blank");
+}
+
 export function subscribeEvents(onEvent: (event: TaskEvent) => void, onError: () => void): EventSource {
   const source = new EventSource(`${API_BASE}/events`);
   source.onmessage = (message) => {

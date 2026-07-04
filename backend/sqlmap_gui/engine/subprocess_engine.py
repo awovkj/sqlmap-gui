@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -26,7 +27,7 @@ class SubprocessSqlmapEngine:
             "cwd": str(cwd),
             "stdout": subprocess.PIPE,
             "stderr": subprocess.STDOUT,
-            "stdin": subprocess.DEVNULL,
+            "stdin": subprocess.PIPE,
             "text": True,
             "encoding": "utf-8",
             "errors": "replace",
@@ -42,6 +43,20 @@ class SubprocessSqlmapEngine:
 
         process = subprocess.Popen(command, **kwargs)
         assert process.stdout is not None
+        assert process.stdin is not None
+        
+        def auto_answer_stdin():
+            try:
+                while process.poll() is None:
+                    process.stdin.write("y\n")
+                    process.stdin.flush()
+                    time.sleep(0.1)
+            except (BrokenPipeError, OSError):
+                pass
+        
+        stdin_thread = threading.Thread(target=auto_answer_stdin, daemon=True)
+        stdin_thread.start()
+        
         try:
             for line in process.stdout:
                 on_line(line.rstrip("\n"))
@@ -51,3 +66,7 @@ class SubprocessSqlmapEngine:
         finally:
             if cancel_event.is_set() and process.poll() is None:
                 process.terminate()
+            try:
+                process.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass

@@ -1,8 +1,29 @@
-﻿__pycache__/
+﻿# Python
+__pycache__/
 *.py[cod]
+*.pyo
+.pytest_cache/
+
+# Node / frontend
 node_modules/
 dist/
 apps/web/dist/
+
+# Runtime data
+artifacts/
 data/*.sqlite3
+data/*.sqlite3-shm
+data/*.sqlite3-wal
+*.log
+
+# Local tooling
+.playwright-mcp/
+.omo/
+.claude/
 .superpowers/
 .tmp/
+
+# Debug screenshots / OS files
+scroll-*.png
+.DS_Store
+Thumbs.db

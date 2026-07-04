@@ -19,7 +19,8 @@ function spawnChild(command, args, env = {}) {
     cwd: repoRoot,
     env: { ...process.env, ...env },
     stdio: "inherit",
-    shell: false,
+    shell: isWindows,
+    windowsHide: isWindows,
   });
   children.push(child);
   child.on("exit", (code) => {

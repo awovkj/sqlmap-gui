@@ -8,8 +8,7 @@
     "start": "node scripts/start-dev.cjs",
     "build:web": "vite build apps/web",
     "typecheck": "tsc --noEmit",
-    "test:backend": "python -m pytest tests/backend -q",
-    "test:legacy": "python -m pytest tests/unit -q"
+    "test:backend": "python -m pytest tests/backend -q"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",

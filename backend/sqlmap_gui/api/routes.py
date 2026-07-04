@@ -5,7 +5,7 @@ import json
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 
 from backend.sqlmap_gui.db.repository import Repository
 from backend.sqlmap_gui.schemas.tasks import ScanConfig
@@ -63,6 +63,11 @@ def register_routes(app: FastAPI, repo: Repository, manager: TaskManager, hub: E
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @app.delete("/api/tasks")
+    def clear_all_tasks() -> dict[str, str]:
+        repo.clear_all_tasks()
+        return {"status": "ok", "message": "All tasks cleared"}
+
     @app.get("/api/tasks/{task_id}/logs")
     def get_task_logs(task_id: str) -> list[dict[str, Any]]:
         return repo.list_task_events(task_id)
@@ -75,6 +80,41 @@ def register_routes(app: FastAPI, repo: Repository, manager: TaskManager, hub: E
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         report["summary"] = json.loads(report.pop("summary_json"))
         return report
+
+    @app.post("/api/tasks/{task_id}/report/generate")
+    def generate_task_report(task_id: str) -> dict[str, Any]:
+        try:
+            report = manager.generate_report(task_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        report["summary"] = json.loads(report.pop("summary_json"))
+        return report
+
+    @app.get("/api/tasks/{task_id}/report/download")
+    def download_task_report(task_id: str, format: str = "json") -> FileResponse:
+        try:
+            report = repo.get_report_for_task(task_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        
+        if format == "html":
+            file_path = report["html_path"]
+            media_type = "text/html"
+            file_name = f"report_{task_id}.html"
+        elif format == "markdown":
+            file_path = report["markdown_path"]
+            media_type = "text/markdown"
+            file_name = f"report_{task_id}.md"
+        else:
+            file_path = report["json_path"]
+            media_type = "application/json"
+            file_name = f"report_{task_id}.json"
+        
+        return FileResponse(
+            path=file_path,
+            media_type=media_type,
+            filename=file_name,
+        )
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:
