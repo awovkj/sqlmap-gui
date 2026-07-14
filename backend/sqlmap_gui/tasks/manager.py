@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -32,8 +32,9 @@ class TaskManager:
         self.hub = hub or EventHub()
         self.sqlmap_script = Path(sqlmap_script)
         self.report_service = ReportService(artifacts)
-        self._executor = ThreadPoolExecutor(max_workers=max_workers)
+        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="sqlmap-task")
         self._cancel_events: dict[str, threading.Event] = {}
+        self._inflight: set[str] = set()
         self._lock = threading.Lock()
 
     def create_task(self, project_id: str, config: ScanConfig) -> dict[str, Any]:
@@ -50,10 +51,22 @@ class TaskManager:
             self.run_pending_once()
             threading.Event().wait(1.0)
 
-    def run_pending_once(self) -> None:
-        queued = self.repo.list_queued_tasks()
-        for task in queued:
-            self._run_task(task)
+    def run_pending_once(self) -> list[Future]:
+        """Dispatch queued tasks to the worker pool, up to ``max_workers`` at a time.
+
+        Returns the futures for the tasks dispatched on this pass so callers
+        (notably tests) can wait for completion. Tasks already dispatched are
+        tracked in ``_inflight`` so repeated polls never run the same task twice.
+        """
+        futures: list[Future] = []
+        for task in self.repo.list_queued_tasks():
+            task_id = task["id"]
+            with self._lock:
+                if task_id in self._inflight:
+                    continue
+                self._inflight.add(task_id)
+            futures.append(self._executor.submit(self._run_task, task))
+        return futures
 
     def cancel_task(self, task_id: str) -> dict[str, Any]:
         with self._lock:
@@ -85,6 +98,25 @@ class TaskManager:
         return config.model_copy(update={"request_file": str(request_path)})
 
     def _run_task(self, task: dict[str, Any]) -> None:
+        """Worker entry point. Guarantees inflight/cancel bookkeeping is cleared
+        and that no exception escapes to the worker pool."""
+        task_id = task["id"]
+        try:
+            self._execute_task(task)
+        except Exception as exc:
+            self.artifacts.append_log(task_id, f"[ERROR] {exc}")
+            try:
+                self.repo.add_task_event(task_id, "error", "error", str(exc))
+                finished = self.repo.finish_task(task_id, TaskStatus.FAILED.value, None, str(exc))
+                self.hub.publish("status", task_id, finished["status"], status=finished["status"])
+            except Exception:
+                pass
+        finally:
+            with self._lock:
+                self._cancel_events.pop(task_id, None)
+                self._inflight.discard(task_id)
+
+    def _execute_task(self, task: dict[str, Any]) -> None:
         task_id = task["id"]
         cancel_event = threading.Event()
         with self._lock:
@@ -131,8 +163,6 @@ class TaskManager:
                 self.hub.publish("error", task_id, message, level="error")
 
         self.hub.publish("status", task_id, finished["status"], status=finished["status"])
-        with self._lock:
-            self._cancel_events.pop(task_id, None)
 
     def generate_report(self, task_id: str) -> dict[str, Any]:
         task = self.repo.get_task(task_id)

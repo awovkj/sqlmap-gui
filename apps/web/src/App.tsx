@@ -1,308 +1,29 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { cancelTask, clearAllTasks, createTask, downloadReport, generateTaskReport, getTaskLogs, getTaskReport, health, listTasks, subscribeEvents } from "./api";
-import type {
-  InputType,
-  ParamFilterType,
-  Preset,
-  ReportRead,
-  ScanConfig,
-  TaskEvent,
-  TaskRead,
-} from "./types";
-
-/* ── Constants ──────────────────────────────────────────── */
-
-const TECHNIQUES = [
-  { value: "BESUTQ", label: "全部" },
-  { value: "B", label: "布尔盲注" },
-  { value: "E", label: "报错注入" },
-  { value: "S", label: "堆叠注入" },
-  { value: "U", label: "联合注入" },
-  { value: "T", label: "时间盲注" },
-  { value: "Q", label: "内联查询" },
-];
-
-const DBMS_OPTIONS = [
-  "", "Altibase", "Amazon Redshift", "Apache Derby", "Apache Ignite", "Aurora", "ClickHouse",
-  "CockroachDB", "CrateDB", "Cubrid", "Drizzle", "EnterpriseDB", "eXtremeDB", "Firebird",
-  "FrontBase", "Greenplum", "H2", "HSQLDB", "IBM DB2", "Informix", "InterSystems Cache",
-  "Iris", "MariaDB", "Mckoi", "MemSQL", "Microsoft Access", "Microsoft SQL Server", "MimerSQL",
-  "MonetDB", "MySQL", "OpenGauss", "Oracle", "Percona", "PostgreSQL", "Presto",
-  "Raima Database Manager", "SAP MaxDB", "SQLite", "Sybase", "TiDB", "Vertica", "Virtuoso",
-  "Yellowbrick", "YugabyteDB",
-];
-
-const PARAM_FILTER_OPTIONS: Array<{ value: ParamFilterType; label: string }> = [
-  { value: "", label: "不限" },
-  { value: "GET", label: "GET" },
-  { value: "POST", label: "POST" },
-  { value: "COOKIE", label: "COOKIE" },
-  { value: "USER-AGENT", label: "User-Agent" },
-  { value: "REFERER", label: "Referer" },
-  { value: "HOST", label: "Host" },
-];
-
-const TAMPER_PRESETS: Record<string, string[]> = {
-  "关闭": [],
-  "通用绕过": ["between", "randomcase", "space2comment"],
-  "编码绕过": ["charencode", "chardoubleencode", "charunicodeencode"],
-  "WAF 强化": ["between", "randomcase", "randomcomments", "space2comment", "charencode"],
-  "MySQL 定向": ["space2mysqlblank", "space2mysqldash", "versionedkeywords"],
-  "MSSQL 定向": ["space2mssqlblank", "space2mssqlhash", "between"],
-};
-
-const PRESETS: Array<{ value: Preset; label: string; description: string }> = [
-  { value: "balanced", label: "平衡测试", description: "level 3 / risk 2 / threads 6" },
-  { value: "deep", label: "深度测试", description: "level 5 / risk 3 / threads 10" },
-  { value: "waf", label: "WAF 绕过", description: "text-only + tamper 组合" },
-  { value: "enum_structure", label: "枚举结构", description: "level 3 + dbs + tables" },
-  { value: "data_export", label: "数据导出", description: "level 3 + dump-all" },
-];
-
-const URL_EXAMPLE = "http://127.0.0.1/vul/sqli/sqli_id.php?id=1";
-const REQUEST_EXAMPLE = `POST /vul/sqli/sqli_id.php HTTP/1.1
-Host: 127.0.0.1
-User-Agent: Mozilla/5.0
-Content-Type: application/x-www-form-urlencoded
-Cookie: PHPSESSID=test
-
-id=1&submit=查询`;
-
-/* ── Defaults ───────────────────────────────────────────── */
-
-function defaultConfig(): ScanConfig {
-  return {
-    target: "",
-    input_type: "url",
-    preset: "balanced",
-    level: 1,
-    risk: 1,
-    threads: 10,
-    batch_workers: 5,
-    technique: "BESUTQ",
-    dbms: "",
-    test_parameter: "",
-    skip_parameter: "",
-    param_exclude: "",
-    param_filter: "",
-    custom_db: "",
-    custom_table: "",
-    custom_column: "",
-    prefix: "",
-    suffix: "",
-    time_sec: undefined,
-    union_cols: "",
-    union_char: "",
-    union_from: "",
-    union_values: "",
-    string: "",
-    not_string: "",
-    regexp: "",
-    code: undefined,
-    test_filter: "",
-    test_skip: "",
-    tamper: [],
-    tamper_preset: "通用绕过",
-    batch: true,
-    random_agent: true,
-    force_ssl: false,
-    text_only: false,
-    skip_waf: false,
-    skip_static: false,
-    smart: false,
-    titles: false,
-    skip_heuristics: false,
-    no_cast: false,
-    no_escape: false,
-    invalid_bignum: false,
-    invalid_logical: false,
-    invalid_string: false,
-    flush_session: false,
-    eta: true,
-    parse_errors: true,
-    current_db: false,
-    current_user: false,
-    is_dba: false,
-    dbs: false,
-    tables: false,
-    columns: false,
-    dump: false,
-    dump_all: false,
-    batch_url: false,
-    batch_data: false,
-    extra_args: [],
-    proxy: "",
-  };
-}
-
-/* ── Helpers ────────────────────────────────────────────── */
-
-type InjectionResults = Record<"databases" | "tables" | "columns" | "current_db" | "current_user", string[]>;
-
-function emptyInjectionResults(): InjectionResults {
-  return { databases: [], tables: [], columns: [], current_db: [], current_user: [] };
-}
-
-function resultsFromReport(report: ReportRead): InjectionResults {
-  return {
-    databases: report.summary.databases ?? [],
-    tables: report.summary.tables ?? [],
-    columns: report.summary.columns ?? [],
-    current_db: report.summary.current_db ?? [],
-    current_user: report.summary.current_user ?? [],
-  };
-}
-
-function statusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    created: "已创建",
-    queued: "排队中",
-    running: "运行中",
-    parsing: "解析中",
-    completed: "已完成",
-    failed: "失败",
-    cancelling: "取消中",
-    cancelled: "已取消",
-    interrupted: "已中断",
-  };
-  return labels[status] ?? status;
-}
-
-function statusClass(status: string): string {
-  if (status === "running") return "status-running";
-  if (status === "completed") return "status-done";
-  if (status === "failed") return "status-fail";
-  if (status === "cancelled" || status === "interrupted") return "status-warn";
-  return "";
-}
-
-function buildPreviewCommand(cfg: ScanConfig): string {
-  const args: string[] = ["python", "-u", "sqlmap.py"];
-  if (cfg.input_type === "raw_request") {
-    args.push("-r", "<request-file>");
-  } else {
-    args.push("-u", cfg.target || "<target-url>");
-  }
-  if (cfg.batch) args.push("--batch");
-  if (cfg.random_agent) args.push("--random-agent");
-  if (cfg.level != null && cfg.level > 0) args.push("--level", String(cfg.level));
-  if (cfg.risk != null && cfg.risk > 0) args.push("--risk", String(cfg.risk));
-  if (cfg.threads) args.push("--threads", String(cfg.threads));
-  if (cfg.technique && cfg.technique !== "BESUTQ") args.push("--technique", cfg.technique);
-  if (cfg.dbms) args.push("--dbms", cfg.dbms);
-  if (cfg.test_parameter) args.push("-p", cfg.test_parameter);
-  if (cfg.skip_parameter) args.push("--skip", cfg.skip_parameter);
-  if (cfg.param_exclude) args.push("--param-exclude", cfg.param_exclude);
-  if (cfg.param_filter) args.push("--param-filter", cfg.param_filter);
-  if (cfg.custom_db) args.push("-D", cfg.custom_db);
-  if (cfg.custom_table) args.push("-T", cfg.custom_table);
-  if (cfg.custom_column) args.push("-C", cfg.custom_column);
-  if (cfg.prefix) args.push("--prefix", cfg.prefix);
-  if (cfg.suffix) args.push("--suffix", cfg.suffix);
-  if (cfg.time_sec) args.push("--time-sec", String(cfg.time_sec));
-  if (cfg.union_cols) args.push("--union-cols", cfg.union_cols);
-  if (cfg.union_char) args.push("--union-char", cfg.union_char);
-  if (cfg.union_from) args.push("--union-from", cfg.union_from);
-  if (cfg.union_values) args.push("--union-values", cfg.union_values);
-  if (cfg.string) args.push("--string", cfg.string);
-  if (cfg.not_string) args.push("--not-string", cfg.not_string);
-  if (cfg.regexp) args.push("--regexp", cfg.regexp);
-  if (cfg.code) args.push("--code", String(cfg.code));
-  if (cfg.test_filter) args.push("--test-filter", cfg.test_filter);
-  if (cfg.test_skip) args.push("--test-skip", cfg.test_skip);
-  if (cfg.tamper.length > 0) args.push("--tamper", cfg.tamper.join(","));
-  if (cfg.force_ssl) args.push("--force-ssl");
-  if (cfg.text_only) args.push("--text-only");
-  if (cfg.skip_waf) args.push("--skip-waf");
-  if (cfg.skip_static) args.push("--skip-static");
-  if (cfg.smart) args.push("--smart");
-  if (cfg.titles) args.push("--titles");
-  if (cfg.skip_heuristics) args.push("--skip-heuristics");
-  if (cfg.no_cast) args.push("--no-cast");
-  if (cfg.no_escape) args.push("--no-escape");
-  if (cfg.invalid_bignum) args.push("--invalid-bignum");
-  if (cfg.invalid_logical) args.push("--invalid-logical");
-  if (cfg.invalid_string) args.push("--invalid-string");
-  if (cfg.flush_session) args.push("--flush-session");
-  if (cfg.eta) args.push("--eta");
-  if (cfg.parse_errors) args.push("--parse-errors");
-  if (cfg.current_db) args.push("--current-db");
-  if (cfg.current_user) args.push("--current-user");
-  if (cfg.is_dba) args.push("--is-dba");
-  if (cfg.dbs) args.push("--dbs");
-  if (cfg.tables) args.push("--tables");
-  if (cfg.columns) args.push("--columns");
-  if (cfg.dump) args.push("--dump");
-  if (cfg.dump_all) args.push("--dump-all");
-  if (cfg.extra_args.length > 0) args.push(...cfg.extra_args);
-  return args.join(" ");
-}
-
-/* ── Section component ──────────────────────────────────── */
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="param-section">
-      <div className="param-section-header">{title}</div>
-      <div className="param-section-body">{children}</div>
-    </div>
-  );
-}
-
-function SelectOrInput({
-  value,
-  onChange,
-  options,
-  placeholder,
-}: {
-  value: string;
-  onChange: (val: string) => void;
-  options: string[];
-  placeholder?: string;
-}) {
-  const [customMode, setCustomMode] = useState(false);
-
-  useEffect(() => {
-    if (value && options.length > 0 && !options.includes(value)) {
-      setCustomMode(true);
-    }
-  }, [value, options]);
-
-  if (customMode || options.length === 0) {
-    return (
-      <div className="select-or-input">
-        <input
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder}
-        />
-        {options.length > 0 && (
-          <button type="button" className="toggle-mode-btn" onClick={() => setCustomMode(false)}>
-            选择
-          </button>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div className="select-or-input">
-      <select
-        value={options.includes(value) ? value : ""}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        <option value="">-- 请选择 --</option>
-        {options.map((opt) => (
-          <option key={opt} value={opt}>{opt}</option>
-        ))}
-      </select>
-      <button type="button" className="toggle-mode-btn" onClick={() => setCustomMode(true)}>
-        自定义
-      </button>
-    </div>
-  );
-}
+import {
+  DBMS_OPTIONS,
+  INPUT_TYPE_BUTTONS,
+  MAX_RENDERED_LOG_LINES,
+  PARAM_FILTER_OPTIONS,
+  PRESETS,
+  REQUEST_EXAMPLE,
+  TAMPER_PRESETS,
+  TECHNIQUES,
+  URL_EXAMPLE,
+} from "./constants";
+import { defaultConfig } from "./config";
+import { Section } from "./components/Section";
+import { SelectOrInput } from "./components/SelectOrInput";
+import {
+  InjectionResults,
+  emptyInjectionResults,
+  parseInjectionResults,
+  resultsFromReport,
+} from "./lib/injection";
+import { buildPreviewCommand } from "./lib/command";
+import { statusClass, statusLabel } from "./lib/status";
+import type { Preset, ReportRead, ScanConfig, TaskEvent, TaskRead } from "./types";
 
 /* ── App ────────────────────────────────────────────────── */
 
@@ -317,11 +38,20 @@ export default function App() {
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null);
   const [injectionResults, setInjectionResults] = useState<InjectionResults>(() => emptyInjectionResults());
   const [taskResultsCache, setTaskResultsCache] = useState<Map<string, InjectionResults>>(new Map());
+  const [autoScroll, setAutoScroll] = useState(true);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const logScrollRef = useRef<HTMLDivElement>(null);
 
   const selectedTask = useMemo(
     () => tasks.find((t) => t.id === selectedTaskId) ?? tasks[0] ?? null,
     [selectedTaskId, tasks],
+  );
+
+  const previewCommand = useMemo(() => buildPreviewCommand(cfg), [cfg]);
+
+  const visibleLogs = useMemo(
+    () => (logs.length > MAX_RENDERED_LOG_LINES ? logs.slice(-MAX_RENDERED_LOG_LINES) : logs),
+    [logs],
   );
 
   const update = useCallback(<K extends keyof ScanConfig>(key: K, val: ScanConfig[K]) => {
@@ -381,8 +111,10 @@ export default function App() {
   }, [selectedTask?.id]);
 
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
+    if (autoScroll) {
+      logEndRef.current?.scrollIntoView({ behavior: "auto" });
+    }
+  }, [logs, autoScroll]);
 
   useEffect(() => {
     if (logs.length > 0 && selectedTask && !report) {
@@ -397,6 +129,13 @@ export default function App() {
   }, [logs, selectedTask?.id, report]);
 
   /* ── Handlers ────────────────────────────────────────── */
+
+  function handleLogScroll() {
+    const el = logScrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    setAutoScroll(nearBottom);
+  }
 
   function applyPreset(preset: Preset) {
     update("preset", preset);
@@ -492,114 +231,7 @@ export default function App() {
     }
   }
 
-  function parseInjectionResults(logs: TaskEvent[]): InjectionResults {
-    const results = emptyInjectionResults();
-
-    let phase: "none" | "databases" | "tables" | "columns" = "none";
-
-    for (const log of logs) {
-      const msg = log.message;
-      const trimmed = msg.trim();
-
-      if (trimmed.startsWith("[*] starting @") || trimmed.startsWith("[*] ending @")) {
-        phase = "none";
-        continue;
-      }
-
-      // ── Phase entries ──
-      if (msg.includes("fetching database names") || msg.includes("available databases")) {
-        phase = "databases";
-        continue;
-      }
-      if (msg.includes("[INFO] fetching tables for database")) {
-        phase = "tables";
-        continue;
-      }
-      if (/^Table:\s/.test(msg) || (msg.includes("Table:") && !msg.includes("[INFO]"))) {
-        phase = "columns";
-        continue;
-      }
-      if (msg.includes("[INFO] dumping data from table")) {
-        phase = "none";
-        continue;
-      }
-
-      // ── Phase-specific parsing (BEFORE exit check) ──
-      if (phase === "databases" && msg.includes("[*]")) {
-        const m = msg.match(/\[\*\]\s+([^\s,]+)/);
-        if (m) {
-          const name = m[1].trim();
-          if (name && !results.databases.includes(name)) {
-            results.databases.push(name);
-          }
-        }
-        continue;
-      }
-
-      if (phase === "tables") {
-        if (msg.startsWith("+") && msg.includes("-")) continue;
-        if (msg.startsWith("|")) {
-          const cells = msg.split("|").filter(c => c.trim());
-          if (cells.length === 1) {
-            const name = cells[0].trim();
-            if (name && name !== "Database" && !results.tables.includes(name)) {
-              results.tables.push(name);
-            }
-          }
-          continue;
-        }
-      }
-
-      if (phase === "columns") {
-        if (msg.startsWith("+") && msg.includes("-")) continue;
-        if (msg.startsWith("|")) {
-          const cells = msg.split("|").filter(c => c.trim());
-          if (cells.length >= 2) {
-            const name = cells[0].trim();
-            if (name && name !== "Column" && !results.columns.includes(name)) {
-              results.columns.push(name);
-            }
-          }
-          continue;
-        }
-      }
-
-      // ── Exit phase on [INFO] (after phase-specific parsing) ──
-      if (msg.includes("[INFO]") && phase !== "none") {
-        if (!msg.includes("fetching database names") && !msg.includes("available databases") &&
-            !msg.includes("fetching tables for database")) {
-          phase = "none";
-        }
-      }
-
-      // ── Always parse current DB/user ──
-      const dbMatch = msg.match(/current database:\s*['"]?([^'"\s,]+)['"]?/);
-      if (dbMatch) {
-        const name = dbMatch[1].trim();
-        if (name && !results.current_db.includes(name)) {
-          results.current_db.push(name);
-        }
-      }
-      const userMatch = msg.match(/current user:\s*['"]?([^'\"]+)['"]?/);
-      if (userMatch) {
-        const name = userMatch[1].trim();
-        if (name && !results.current_user.includes(name)) {
-          results.current_user.push(name);
-        }
-      }
-    }
-
-    return results;
-  }
-
   /* ── Render ──────────────────────────────────────────── */
-
-  const inputTypeButtons: Array<{ value: InputType; label: string }> = [
-    { value: "url", label: "单 URL" },
-    { value: "raw_request", label: "原始请求" },
-    { value: "batch_urls", label: "批量 URL" },
-    { value: "batch_requests", label: "批量请求包" },
-  ];
 
   return (
     <main className="app-shell">
@@ -790,8 +422,8 @@ export default function App() {
           <Section title="代理设置">
             <div className="field-row">
               <label>代理地址</label>
-              <input value={cfg.proxy ?? ""} 
-                onChange={(e) => update("proxy", e.target.value || undefined)} 
+              <input value={cfg.proxy ?? ""}
+                onChange={(e) => update("proxy", e.target.value || undefined)}
                 placeholder="如 http://127.0.0.1:7890" />
             </div>
           </Section>
@@ -881,7 +513,7 @@ export default function App() {
             <div className="card-header">
               <h2>目标 / 数据包输入</h2>
               <div className="input-type-bar">
-                {inputTypeButtons.map((b) => (
+                {INPUT_TYPE_BUTTONS.map((b) => (
                   <button key={b.value} type="button"
                     className={`seg-btn ${cfg.input_type === b.value ? "active" : ""}`}
                     onClick={() => update("input_type", b.value)}>
@@ -914,11 +546,11 @@ export default function App() {
             <div className="card-header">
               <h2>命令预览</h2>
               <button type="button" className="ghost-btn"
-                onClick={() => { navigator.clipboard.writeText(buildPreviewCommand(cfg)); }}>
+                onClick={() => { navigator.clipboard.writeText(previewCommand); }}>
                 复制
               </button>
             </div>
-            <pre className="preview-terminal">{buildPreviewCommand(cfg)}</pre>
+            <pre className="preview-terminal">{previewCommand}</pre>
           </div>
 
           <button type="button" className="primary-btn submit-btn" onClick={(e) => submit(e)}>
@@ -959,7 +591,7 @@ export default function App() {
                     <h3>当前数据库</h3>
                     <div className="result-tags">
                       {injectionResults.current_db.map((db, i) => (
-                        <span key={i} className="result-tag" 
+                        <span key={i} className="result-tag"
                           onClick={() => update("custom_db", db)}
                           title="点击使用此数据库">
                           {db}
@@ -968,7 +600,7 @@ export default function App() {
                     </div>
                   </div>
                 )}
-                
+
                 {injectionResults.databases.length > 0 && (
                   <div className="result-group">
                     <h3>数据库列表</h3>
@@ -983,7 +615,7 @@ export default function App() {
                     </div>
                   </div>
                 )}
-                
+
                 {injectionResults.tables.length > 0 && (
                   <div className="result-group">
                     <h3>表名列表</h3>
@@ -1070,9 +702,12 @@ export default function App() {
               <h2>实时日志</h2>
               <span className="log-count">{logs.length} 行</span>
             </div>
-            <div className="log-terminal">
+            <div className="log-terminal" ref={logScrollRef} onScroll={handleLogScroll}>
               {logs.length === 0 && <p className="muted">等待任务输出...</p>}
-              {logs.map((line, i) => (
+              {logs.length > MAX_RENDERED_LOG_LINES && (
+                <div className="muted log-truncated">仅显示最近 {MAX_RENDERED_LOG_LINES} 行（共 {logs.length} 行）</div>
+              )}
+              {visibleLogs.map((line, i) => (
                 <div key={line.id ?? i} className={`log-line log-${line.level}`}>{line.message}</div>
               ))}
               <div ref={logEndRef} />

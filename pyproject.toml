@@ -1,0 +1,18 @@
+# Tooling configuration for the SQLmap GUI backend. Runtime dependencies live
+# in requirements.txt; this file only configures the test runner and linter so
+# it stays install-backend-agnostic (no build-system table required).
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+# Bundled sqlmap source and generated runtime data are not ours to lint.
+extend-exclude = ["vendor", "artifacts", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]

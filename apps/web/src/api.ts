@@ -2,6 +2,13 @@ import type { ReportRead, ScanConfig, TaskEvent, TaskRead } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8765/api";
 
+export class ApiError extends Error {
+  constructor(readonly status: number, readonly statusText: string, readonly body: string) {
+    super(`${status} ${statusText}: ${body}`);
+    this.name = "ApiError";
+  }
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
@@ -9,7 +16,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`${response.status} ${response.statusText}: ${text}`);
+    throw new ApiError(response.status, response.statusText, text);
   }
   return response.json() as Promise<T>;
 }
@@ -37,7 +44,7 @@ export async function getTaskReport(taskId: string): Promise<ReportRead | null> 
   try {
     return await requestJson(`/tasks/${taskId}/report`);
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("404")) {
+    if (error instanceof ApiError && error.status === 404) {
       return null;
     }
     throw error;

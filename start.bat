@@ -45,4 +45,4 @@ echo ----------------------------------------
 echo.
 
 call npm start
-pause
+if not "%SQLMAP_GUI_NO_PAUSE%"=="1" pause

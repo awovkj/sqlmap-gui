@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 import threading
+from collections import deque
 from typing import Any
 
 
 class EventHub:
-    def __init__(self) -> None:
-        self._events: list[dict[str, Any]] = []
+    """In-memory pub/sub buffer for task events consumed by the SSE stream.
+
+    Events are retained in a bounded ring buffer so a long-lived session cannot
+    grow memory without limit. Live SSE clients poll ``snapshot`` roughly once a
+    second and never fall far enough behind to notice the cap; historical logs
+    are always available from the database via the task-logs endpoint.
+    """
+
+    def __init__(self, max_events: int = 5000) -> None:
+        self._events: deque[dict[str, Any]] = deque(maxlen=max_events)
         self._lock = threading.Lock()
         self._next_id = 1
 
@@ -26,4 +35,8 @@ class EventHub:
 
     def snapshot(self, after_id: int = 0) -> list[dict[str, Any]]:
         with self._lock:
+            # Events are appended in ascending id order, so once we pass the
+            # cursor everything after it is newer; stop scanning early otherwise.
+            if not self._events or int(self._events[-1]["id"]) <= after_id:
+                return []
             return [dict(event) for event in self._events if int(event["id"]) > after_id]

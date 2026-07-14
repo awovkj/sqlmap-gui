@@ -8,6 +8,7 @@
     "start": "node scripts/start-dev.cjs",
     "build:web": "vite build apps/web",
     "typecheck": "tsc --noEmit",
+    "test": "python -m pytest -q",
     "test:backend": "python -m pytest tests/backend -q"
   },
   "dependencies": {

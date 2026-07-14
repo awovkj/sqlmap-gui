@@ -35,9 +35,13 @@ def create_app(
     app = FastAPI(title="SQLmap GUI Backend", version="2.0.0-phase1")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
+        # Local desktop tool: the renderer is served from the Vite dev server
+        # (localhost/127.0.0.1) or from a packaged file:// page (Origin "null").
+        # No cookies/credentials are used, so a wildcard-with-credentials combo
+        # (which browsers reject) is neither needed nor allowed here.
+        allow_origin_regex=r"^(https?://(localhost|127\.0\.0\.1)(:\d+)?|null)$",
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["*"],
     )
     app.state.repo = repo

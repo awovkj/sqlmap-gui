@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 
 from backend.sqlmap_gui.core.artifacts import ArtifactsManager
@@ -33,7 +34,8 @@ def test_task_manager_runs_task_and_writes_report(tmp_path: Path):
     project = repo.ensure_default_project()
 
     task = manager.create_task(project["id"], ScanConfig(target="http://example.test/?id=1"))
-    manager.run_pending_once()
+    for future in manager.run_pending_once():
+        future.result()
 
     stored = repo.get_task(task["id"])
     report = repo.get_report_for_task(task["id"])
@@ -56,10 +58,70 @@ def test_report_generation_failure_does_not_override_completed_task(tmp_path: Pa
     project = repo.ensure_default_project()
 
     task = manager.create_task(project["id"], ScanConfig(target="http://example.test/?id=1"))
-    manager.run_pending_once()
+    for future in manager.run_pending_once():
+        future.result()
 
     stored = repo.get_task(task["id"])
     events = repo.list_task_events(task["id"])
 
     assert stored["status"] == "completed"
     assert any(event["type"] == "error" and "report parser failed" in event["message"] for event in events)
+
+
+class BlockingEngine:
+    """Both concurrent runs must meet at the barrier, proving they overlap."""
+
+    def __init__(self, barrier: threading.Barrier):
+        self.barrier = barrier
+
+    def run(self, command, cwd, on_line, cancel_event):
+        self.barrier.wait(timeout=5)
+        on_line("[INFO] scan completed")
+        return 0
+
+
+class PrologueFailingManager(TaskManager):
+    def _prepare_config(self, task_id, config):
+        raise RuntimeError("prepare failed")
+
+
+def test_task_manager_runs_two_tasks_concurrently(tmp_path: Path):
+    db_path = tmp_path / "app.sqlite3"
+    init_database(db_path)
+    repo = Repository(db_path)
+    artifacts = ArtifactsManager(tmp_path / "artifacts")
+    hub = EventHub()
+    barrier = threading.Barrier(2)
+    manager = TaskManager(repo, artifacts, BlockingEngine(barrier), hub, max_workers=2)
+    project = repo.ensure_default_project()
+
+    manager.create_task(project["id"], ScanConfig(target="http://a.test/?id=1"))
+    manager.create_task(project["id"], ScanConfig(target="http://b.test/?id=1"))
+    futures = manager.run_pending_once()
+
+    assert len(futures) == 2
+    for future in futures:
+        future.result(timeout=10)  # would hang if the runs were serial
+
+    assert {task["status"] for task in repo.list_tasks()} == {"completed"}
+    # A repeat poll must not re-dispatch already-finished tasks.
+    assert manager.run_pending_once() == []
+
+
+def test_prologue_failure_marks_task_failed_and_clears_inflight(tmp_path: Path):
+    db_path = tmp_path / "app.sqlite3"
+    init_database(db_path)
+    repo = Repository(db_path)
+    artifacts = ArtifactsManager(tmp_path / "artifacts")
+    hub = EventHub()
+    manager = PrologueFailingManager(repo, artifacts, FakeEngine(), hub, max_workers=1)
+    project = repo.ensure_default_project()
+
+    task = manager.create_task(project["id"], ScanConfig(target="http://x.test/?id=1"))
+    for future in manager.run_pending_once():
+        future.result(timeout=10)
+
+    stored = repo.get_task(task["id"])
+    assert stored["status"] == "failed"
+    assert task["id"] not in manager._inflight
+    assert manager.run_pending_once() == []
